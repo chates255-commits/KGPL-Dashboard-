@@ -3,7 +3,8 @@ import sqlite3, os, hashlib, io, traceback
 from functools import wraps
 from datetime import datetime, timedelta, timezone
 
-app = Flask(__name__)
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, template_folder=os.path.join(_BASE_DIR, "templates"), static_folder=os.path.join(_BASE_DIR, "static"))
 app.secret_key = os.environ.get("SECRET_KEY", "kgpl-ihb-secret-change-in-production-2026")
 
 # India Standard Time
@@ -56,8 +57,7 @@ def modification_status():
 
 
 
-_BASE = os.path.dirname(os.path.abspath(__file__))
-DB = os.environ.get("DATABASE_PATH", os.path.join(_BASE, "kgpl.db"))
+DB = os.environ.get("DATABASE_PATH", os.path.join(_BASE_DIR, "kgpl.db"))
 
 SOURCES = ["Kandla", "Mundra (Mithi Rohar)", "Dumad", "Dahej", "Pipavav", "Bina"]
 OMCS = ["IOCL", "BPCL", "HPCL"]
@@ -848,14 +848,48 @@ def report():
 
 @app.errorhandler(500)
 def internal_error(e):
-    traceback.print_exc()
+    tb = traceback.format_exc()
+    print(tb)
+    # Temporary: show traceback so we can fix the real bug
+    safe = tb.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return (
         "<h1>Internal Server Error</h1>"
-        "<p>The application hit an error. Check Render logs for the traceback.</p>"
-        "<pre style=\"white-space:pre-wrap;font-size:12px;\">" + str(e) + "</pre>"
-        "<p><a href=\"/\">Home</a></p>",
+        "<p>Copy the text below and send it for fixing:</p>"
+        "<pre style=\"white-space:pre-wrap;background:#111;color:#0f0;padding:12px;font-size:12px;\">"
+        + safe +
+        "</pre>"
+        "<p><a href=\"/\">Home</a> | <a href=\"/debug\">Debug</a></p>",
         500,
     )
+
+
+
+@app.route("/debug")
+def debug_info():
+    import sys
+    info = {
+        "python": sys.version,
+        "cwd": os.getcwd(),
+        "base_dir": _BASE_DIR if "_BASE_DIR" in dir() else os.path.dirname(os.path.abspath(__file__)),
+        "db_path": DB,
+        "db_exists": os.path.exists(DB),
+        "templates_dir": app.template_folder,
+        "templates_exist": os.path.isdir(app.template_folder),
+        "template_files": sorted(os.listdir(app.template_folder)) if os.path.isdir(app.template_folder) else [],
+        "files_in_base": sorted(os.listdir(os.path.dirname(os.path.abspath(__file__))))[:50],
+    }
+    try:
+        init_db()
+        conn = get_db()
+        n = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        conn.close()
+        info["users_count"] = n
+        info["db_ok"] = True
+    except Exception as e:
+        info["db_ok"] = False
+        info["db_error"] = str(e)
+    return jsonify(info)
+
 
 @app.route("/health")
 def health():
